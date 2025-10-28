@@ -1,0 +1,42 @@
+{
+  "comment": "임직원 추가 테스트 설정 파일",
+
+  "employees": [
+    {
+      "department": "개발팀",
+      "job_grade": "Pro",
+      "job_position": "Pro",
+      "assignment_start_date": "today",
+      "access_cases": ["출근", "퇴근"],
+      "rf_card": []
+    },
+    {
+      "department": "개발팀",
+      "job_grade": "Pro",
+      "job_position": "Pro",
+      "assignment_start_date": "today",
+      "access_cases": ["출근", "퇴근"]
+    },
+    {
+      "department": "개발팀",
+      "job_grade": "Pro",
+      "job_position": "Pro",
+      "assignment_start_date": "today",
+      "access_cases": ["출근", "퇴근"]
+    },
+    {
+      "department": "개발팀",
+      "job_grade": "Pro",
+      "job_position": "Pro",
+      "assignment_start_date": "today",
+      "access_cases": ["출근", "퇴근"]
+    },
+    {
+      "department": "개발팀",
+      "job_grade": "Pro",
+      "job_position": "Pro",
+      "assignment_start_date": "today",
+      "access_cases": ["출근", "퇴근"]
+    }
+  ]
+}

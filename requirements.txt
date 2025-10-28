@@ -1,0 +1,11 @@
+# Playwright 및 테스트 프레임워크
+playwright==1.49.1
+pytest==8.3.4
+pytest-playwright==0.6.2
+pytest-base-url==2.1.0
+
+# 환경 변수 관리
+python-dotenv==1.0.1
+
+# 추가 유틸리티
+Pillow==11.1.0
