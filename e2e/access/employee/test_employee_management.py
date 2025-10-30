@@ -3,7 +3,7 @@ import os
 import time
 import random
 import re
-from datetime import date
+from datetime import date, datetime
 from playwright.sync_api import Page, expect
 
 # 임직원 관리 페이지로 이동하는 픽스처
@@ -60,7 +60,8 @@ class TestEmployeeManagement:
         image_path = os.path.join(image_dir, image_filename)
 
         # 이름 생성
-        unique_name = f"{employee_id}-{int(time.time())}"
+        timestamp = datetime.now().strftime("%y%m%d-%H%M")
+        unique_name = f"{employee_id}-{timestamp}"
 
         page.get_by_role("button", name="임직원 추가").click()
         page.wait_for_url("**/employeeadd")
@@ -298,7 +299,8 @@ class TestEmployeeManagement:
             if json_name:
                 unique_name = f"{json_name}"
             else:
-                unique_name = f"{employee_id}-{int(time.time())}"
+                timestamp = datetime.now().strftime("%y%m%d-%H%M")
+                unique_name = f"{employee_id}-{timestamp}"
 
             print(f"\n[INFO] Processing employee {idx + 1}/{len(employees)}: ID={employee_id}, Name={unique_name}")
 
@@ -431,7 +433,29 @@ class TestEmployeeManagement:
 
             # 목록에서 추가한 employee_id가 보이는지 확인
             employee_cell = page.get_by_role("cell", name=employee_id, exact=True)
-            expect(employee_cell).to_be_visible(timeout=10000)
+
+            # 검증 실패 시 디버깅 정보 출력
+            try:
+                expect(employee_cell).to_be_visible(timeout=10000)
+            except AssertionError:
+                print(f"[ERROR] Employee cell not found: ID={employee_id}")
+                print(f"Current URL: {page.url}")
+
+                # 현재 페이지의 모든 cell 출력 (디버깅용)
+                all_cells = page.get_by_role("cell").all()
+                print(f"Total cells found: {len(all_cells)}")
+                if len(all_cells) > 0:
+                    print("First 10 cells:")
+                    for i, cell in enumerate(all_cells[:10]):
+                        print(f"  {i+1}. {cell.text_content()}")
+
+                # 스크린샷 저장
+                screenshot_path = f"playwright-report/screenshots/employee_{employee_id}_not_found.png"
+                os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+                page.screenshot(path=screenshot_path, full_page=True)
+                print(f"Screenshot saved: {screenshot_path}")
+
+                raise
 
             added_employee_ids.append(employee_id)
 
@@ -567,6 +591,10 @@ class TestEmployeeManagement:
         """
         em_add.xlsx Excel file의 '임직원_추가' 시트 데이터를 기반으로 여러 임직원을 추가하는 기능 테스트
         Excel의 index 컬럼 값만큼 임직원을 등록합니다.
+
+        개선사항:
+        - 테스트 시작 전 '인원' 시트의 마지막 index를 확인하여 다음 번호부터 추가
+        - 추가된 인원의 name과 id를 '인원' 시트에 기록
         """
         from openpyxl import load_workbook
 
@@ -589,8 +617,32 @@ class TestEmployeeManagement:
         if not os.path.exists(excel_path):
             pytest.skip(f"em_add.xlsx 파일이 없습니다: {excel_path}")
 
+        # Excel 파일이 열려있는지 확인 (lock 파일 체크)
+        lock_file = os.path.join(os.path.dirname(excel_path), f"~${os.path.basename(excel_path)}")
+        if os.path.exists(lock_file):
+            print(f"[WARNING] Excel 파일이 다른 프로그램에서 열려있습니다: {excel_path}")
+            print(f"[WARNING] 테스트는 실행되지만 '인원' 시트에 데이터를 저장하지 못할 수 있습니다.")
+            print(f"[WARNING] 데이터 저장을 위해 Excel 파일을 닫고 테스트를 실행하세요.\n")
+
         wb = load_workbook(excel_path)
         ws = wb["임직원_추가"]
+
+        # "인원" 시트에서 마지막 index 확인
+        ws_personnel = wb["인원"]
+        last_index = 0
+
+        # 컬럼 A에서 마지막 숫자 찾기 (헤더 제외)
+        for row in ws_personnel.iter_rows(min_row=2, min_col=1, max_col=1):
+            if row[0].value is not None:
+                try:
+                    current_index = int(row[0].value)
+                    if current_index > last_index:
+                        last_index = current_index
+                except (ValueError, TypeError):
+                    continue
+
+        next_index = last_index + 1
+        print(f"[INFO] '인원' 시트의 마지막 index: {last_index}, 다음 추가할 index: {next_index}")
 
         # 데이터 읽기 (헤더 제외, row 2부터)
         employees = []
@@ -599,7 +651,7 @@ class TestEmployeeManagement:
                 break
 
             employee_data = {
-                "index": int(row[0]) if row[0] else None,
+                "original_index": int(row[0]) if row[0] else None,  # 원래 index 보관
                 "department": row[1] if row[1] else "",
                 "job_grade": row[2] if row[2] else "",
                 "job_position": row[3] if row[3] else "",
@@ -611,6 +663,8 @@ class TestEmployeeManagement:
 
         if not employees:
             pytest.skip("em_add.xlsx 파일의 '임직원_추가' 시트에 데이터가 없습니다.")
+        else:
+            print(f"[INFO] Excel에서 읽은 임직원 수: {len(employees)}명")
 
         image_dir = os.path.abspath("C:/00project/2025/SDG/ACS-WebApp-Test//employee")
         image_files = [f for f in os.listdir(image_dir) if os.path.isfile(os.path.join(image_dir, f))]
@@ -626,10 +680,11 @@ class TestEmployeeManagement:
             # 개별 임직원 처리 시작 시간
             employee_start_time = time.time()
 
-            # index 값에 해당하는 이미지 파일 선택 (index - 1)
-            image_index = employee_data["index"] - 1
+            # 원래 index 값에 해당하는 이미지 파일 선택
+            original_index = employee_data["original_index"]
+            image_index = original_index - 1
             if image_index < 0 or image_index >= len(image_files):
-                print(f"[WARNING] Invalid index {employee_data['index']}, skipping...")
+                print(f"[WARNING] Invalid original_index {original_index}, skipping...")
                 continue
 
             image_filename = image_files[image_index]
@@ -637,19 +692,23 @@ class TestEmployeeManagement:
             image_path = os.path.join(image_dir, image_filename)
 
             # 이름 생성
-            unique_name = f"{employee_id}-{int(time.time())}"
+            timestamp = datetime.now().strftime("%y%m%d-%H%M")
+            unique_name = f"{employee_id}-{timestamp}"
 
-            print(f"\n[INFO] Processing employee {idx + 1}/{len(employees)}: Index={employee_data['index']}, ID={employee_id}, Name={unique_name}")
+            # 이번 employee가 사용할 실제 index 계산
+            current_personnel_index = next_index + idx
+
+            print(f"\n[INFO] Processing employee {idx + 1}/{len(employees)}: Personnel Index={current_personnel_index}, Image Index={original_index}, ID={employee_id}, Name={unique_name}")
 
             page.get_by_role("button", name="임직원 추가").click()
             page.wait_for_url("**/employeeadd")
 
-            # 프로필 사진 업로드
+            # 프로필 사진 업로드 - 대기 시간 단축 (500ms → 200ms)
             with page.expect_file_chooser() as fc_info:
                 page.locator(".MuiSvgIcon-root.MuiSvgIcon-fontSizeMedium.css-185tx24 > path").first.click()
             file_chooser = fc_info.value
             file_chooser.set_files(image_path)
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(200)
 
             page.get_by_label("사번").fill(employee_id)
             page.get_by_label("이름").fill(unique_name)
@@ -659,83 +718,137 @@ class TestEmployeeManagement:
             department = employee_data.get("department")
             if department:
                 page.locator("#mui-component-select-departmentId").click()
-                page.wait_for_timeout(500)
+                # "부서 선택" 옵션이 나타날 때까지 대기 (드롭다운 렌더링 완료)
+                page.get_by_role("option").first.wait_for(state="visible", timeout=5000)
+
                 dept_option = page.get_by_role("option", name=department, exact=True)
-                if dept_option.is_visible():
+
+                # Strict mode 위반 방지: 동일한 이름이 여러 개 있을 수 있음
+                count = dept_option.count()
+                if count == 1:
                     dept_option.click()
+                elif count > 1:
+                    print(f"[WARNING] 부서 '{department}'이(가) {count}개 존재 - 첫 번째 선택")
+                    dept_option.first.click()
                 else:
+                    # 이름으로 못 찾으면 fallback
+                    print(f"[WARNING] 부서 '{department}'을(를) 찾을 수 없음 - 랜덤 선택")
                     dept_options = page.locator('[role="option"]').all()
                     if len(dept_options) > 1:
                         random.choice(dept_options[1:]).click()
                     elif dept_options:
                         dept_options[0].click()
-                page.wait_for_timeout(300)
+                # 드롭다운 닫힘 확인 불필요 - 다음 클릭으로 자동 닫힘
 
             # 직급 선택
             job_grade = employee_data.get("job_grade")
             if job_grade:
                 page.locator("#mui-component-select-jobGradeId").click()
-                page.wait_for_timeout(500)
+                page.get_by_role("option").first.wait_for(state="visible", timeout=3000)
                 grade_option = page.get_by_role("option", name=job_grade, exact=True)
-                if grade_option.is_visible():
+
+                # Strict mode 위반 방지: 동일한 이름이 여러 개 있을 수 있음
+                count = grade_option.count()
+                if count == 1:
                     grade_option.click()
+                elif count > 1:
+                    print(f"[WARNING] 직급 '{job_grade}'이(가) {count}개 존재 - 첫 번째 선택")
+                    grade_option.first.click()
                 else:
+                    # 이름으로 못 찾으면 fallback
+                    print(f"[WARNING] 직급 '{job_grade}'을(를) 찾을 수 없음 - 랜덤 선택")
                     grade_options = page.locator('[role="option"]').all()
                     if len(grade_options) > 1:
                         random.choice(grade_options[1:]).click()
                     elif grade_options:
                         grade_options[0].click()
-                page.wait_for_timeout(300)
+                # 드롭다운 닫힘 확인 불필요
 
             # 직책 선택
             job_position = employee_data.get("job_position")
             if job_position:
                 page.locator("#mui-component-select-jobPositionId").click()
-                page.wait_for_timeout(500)
+                page.get_by_role("option").first.wait_for(state="visible", timeout=3000)
                 pos_option = page.get_by_role("option", name=job_position, exact=True)
-                if pos_option.is_visible():
+
+                # Strict mode 위반 방지: 동일한 이름이 여러 개 있을 수 있음
+                count = pos_option.count()
+                if count == 1:
                     pos_option.click()
+                elif count > 1:
+                    print(f"[WARNING] 직책 '{job_position}'이(가) {count}개 존재 - 첫 번째 선택")
+                    pos_option.first.click()
                 else:
+                    # 이름으로 못 찾으면 fallback
+                    print(f"[WARNING] 직책 '{job_position}'을(를) 찾을 수 없음 - 랜덤 선택")
                     pos_options = page.locator('[role="option"]').all()
                     if len(pos_options) > 1:
                         random.choice(pos_options[1:]).click()
                     elif pos_options:
                         pos_options[0].click()
-                page.wait_for_timeout(300)
+                # 드롭다운 닫힘 확인 불필요
 
             # 발령 시작일 선택
             assignment_start = employee_data.get("assignment_start_date")
             if assignment_start == "today" or assignment_start:
                 page.get_by_role("group", name="발령 시작일").get_by_label("날짜를 선택하세요").click()
-                page.wait_for_timeout(500)
+                # 캘린더 표시 대기 - gridcell 사용 (인코딩 문제 회피)
+                page.wait_for_timeout(200)
                 today_button = page.get_by_role("button", name="오늘", exact=True)
                 if today_button.is_visible():
                     today_button.click()
                 else:
                     today_day = date.today().day
                     page.get_by_role("gridcell", name=str(today_day), exact=True).click()
-                page.wait_for_timeout(300)
+                # 캘린더 닫힘 확인 불필요
 
-            # 출입케이스 선택
+            # 출입케이스 선택 (멀티 선택 가능)
             access_cases = employee_data.get("access_cases", [])
+
+            # Excel에서 읽은 access_cases만 사용 (비어있으면 스킵)
+            if not access_cases or (len(access_cases) == 1 and not access_cases[0]):
+                print(f"[INFO] Access cases empty, skipping...")
+                access_cases = []
+            else:
+                # Excel에서 정의된 케이스 사용
+                print(f"[INFO] Using access cases from Excel: {access_cases}")
+
+            # 드롭다운 열기 및 멀티 선택
             if access_cases:
                 page.locator("#mui-component-select-accessCaseId").click()
-                page.wait_for_timeout(500)
+                page.get_by_role("option").first.wait_for(state="visible", timeout=3000)
+
+                selected_count = 0
                 for case_name in access_cases:
                     case_name = case_name.strip()
-                    if case_name:
-                        case_option = page.get_by_role("option", name=case_name, exact=True)
-                        if case_option.is_visible():
-                            case_option.click()
-                            page.wait_for_timeout(200)
+                    if not case_name:
+                        continue
+
+                    # Strict mode 위반 방지
+                    case_option = page.get_by_role("option", name=case_name, exact=True)
+                    count = case_option.count()
+
+                    if count == 1:
+                        case_option.click()
+                        selected_count += 1
+                        page.wait_for_timeout(100)
+                    elif count > 1:
+                        print(f"[WARNING] 출입케이스 '{case_name}'이(가) {count}개 존재 - 첫 번째 선택")
+                        case_option.first.click()
+                        selected_count += 1
+                        page.wait_for_timeout(100)
+                    else:
+                        print(f"[WARNING] 출입케이스 '{case_name}'을(를) 찾을 수 없음")
+
+                print(f"[INFO] Selected {selected_count}/{len(access_cases)} access cases")
                 page.keyboard.press('Escape')
-                page.wait_for_timeout(300)
+                page.wait_for_timeout(100)
 
             # RF 카드 처리
             rf_cards = employee_data.get("rf_card", [])
             if rf_cards and rf_cards[0]:  # 빈 문자열이 아닌 경우만
                 page.get_by_role("combobox", name="출입 카드").click()
-                page.wait_for_timeout(500)
+                page.get_by_role("option").first.wait_for(state="visible", timeout=3000)
 
                 # 모든 옵션 가져오기
                 card_options = page.locator('[role="option"]').all()
@@ -749,37 +862,72 @@ class TestEmployeeManagement:
                         option_text = option.text_content()
                         if option_text and card_value in option_text:
                             option.click()
-                            page.wait_for_timeout(200)
+                            page.wait_for_timeout(100)  # 200ms → 100ms 단축
                             break
 
                 page.keyboard.press('Escape')
-                page.wait_for_timeout(300)
+                page.wait_for_timeout(100)  # 300ms → 100ms 단축
 
-            # 두 번째 출입자 이미지 업로드
+            # 두 번째 출입자 이미지 업로드 - 대기 시간 단축 (750ms → 300ms)
             with page.expect_file_chooser() as fc_info:
                 page.locator("div").filter(has_text=re.compile(r"^출입자 이미지$")).locator("svg").first.click()
             file_chooser = fc_info.value
             file_chooser.set_files(image_path)
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(300)
 
             page.get_by_role("button", name="저장").click()
 
-            # 저장 후 다이얼로그 자동 처리 및 페이지 전환 대기
-            page.wait_for_timeout(3000)
+            # 저장 후 페이지 전환 대기 - networkidle로 자동 감지 (고정 3000ms 제거)
             page.wait_for_load_state('networkidle', timeout=15000)
 
-            # 목록으로 돌아왔는지 확인
-            page.wait_for_timeout(2000)
-
-            # 목록에서 추가한 employee_id가 보이는지 확인
+            # 목록에서 추가한 employee_id가 보이는지 확인 - 고정 대기 제거, 직접 검증
             employee_cell = page.get_by_role("cell", name=employee_id, exact=True)
-            expect(employee_cell).to_be_visible(timeout=10000)
+
+            # 검증 실패 시 디버깅 정보 출력
+            try:
+                expect(employee_cell).to_be_visible(timeout=10000)
+            except AssertionError:
+                print(f"[ERROR] Employee cell not found: ID={employee_id}")
+                print(f"Current URL: {page.url}")
+
+                # 현재 페이지의 모든 cell 출력 (디버깅용)
+                all_cells = page.get_by_role("cell").all()
+                print(f"Total cells found: {len(all_cells)}")
+                if len(all_cells) > 0:
+                    print("First 10 cells:")
+                    for i, cell in enumerate(all_cells[:10]):
+                        print(f"  {i+1}. {cell.text_content()}")
+
+                # 스크린샷 저장
+                screenshot_path = f"playwright-report/screenshots/employee_{employee_id}_not_found.png"
+                os.makedirs(os.path.dirname(screenshot_path), exist_ok=True)
+                page.screenshot(path=screenshot_path, full_page=True)
+                print(f"Screenshot saved: {screenshot_path}")
+
+                raise
 
             added_employee_ids.append(employee_id)
 
             # 개별 임직원 처리 완료 시간 계산
             employee_elapsed = time.time() - employee_start_time
             print(f"[OK] Employee added successfully: ID={employee_id}, Name={unique_name}, Time={employee_elapsed:.2f}s")
+
+            # "인원" 시트에 결과 기록
+            # 새로운 행 추가: 컬럼 A=index, B=department, C=job_grade, D=job_position, E=assignment_start_date, F=access_cases, G=rf_card, I=name, J=id
+            new_row_data = [
+                current_personnel_index,  # A: index
+                employee_data.get("department", ""),  # B: department
+                employee_data.get("job_grade", ""),  # C: job_grade
+                employee_data.get("job_position", ""),  # D: job_position
+                employee_data.get("assignment_start_date", ""),  # E: assignment_start_date
+                ",".join(employee_data.get("access_cases", [])),  # F: access_cases
+                ",".join(employee_data.get("rf_card", [])),  # G: rf_card
+                None,  # H: empty column
+                unique_name,  # I: name
+                employee_id,  # J: id
+            ]
+            ws_personnel.append(new_row_data)
+            print(f"[INFO] Added to '인원' sheet: Index={current_personnel_index}, Name={unique_name}, ID={employee_id}")
 
             # 테스트 성공 시 이미지 파일을 employee_add 폴더로 이동
             if os.path.exists(image_path):
@@ -795,11 +943,29 @@ class TestEmployeeManagement:
                 print(f"[INFO] Image file moved: {image_filename} -> employee_add/")
 
         # Excel 파일 한 번에 저장 (모든 임직원 추가 완료 후)
-        try:
-            wb.save(excel_path)
-            print(f"\n[INFO] All employee info saved to Excel sheet '추가결과': {excel_path}")
-        except Exception as e:
-            print(f"\n[WARNING] Failed to save Excel file: {e}")
+        max_retries = 3
+        saved = False
+
+        for attempt in range(max_retries):
+            try:
+                wb.save(excel_path)
+                print(f"\n[INFO] All employee info saved to Excel '인원' sheet: {excel_path}")
+                saved = True
+                break
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    print(f"\n[WARNING] Excel file is locked (attempt {attempt + 1}/{max_retries}). Please close Excel and retry will happen in 2 seconds...")
+                    page.wait_for_timeout(2000)
+                else:
+                    print(f"\n[ERROR] Failed to save Excel file after {max_retries} attempts: {e}")
+                    print(f"[INFO] Please close the Excel file and run the following command manually:")
+                    print(f"       The data is already in memory, just needs to be saved.")
+            except Exception as e:
+                print(f"\n[ERROR] Failed to save Excel file: {e}")
+                break
+
+        if not saved:
+            print(f"\n[WARNING] Excel file was NOT saved. Added employees are still tracked in test output above.")
 
         # 전체 테스트 완료 시간 계산
         test_elapsed = time.time() - test_start_time

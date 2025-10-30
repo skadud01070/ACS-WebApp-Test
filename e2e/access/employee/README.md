@@ -343,6 +343,139 @@ TimeoutError: page.wait_for_url: Timeout exceeded
 - `page.once()` 대신 `page.on()` 사용 확인
 - 다이얼로그 핸들러가 테스트 시작 시 등록되었는지 확인
 
+## Excel 기반 테스트: test_add_employees_from_excel
+
+### 개요
+
+Excel 파일(`em_add.xlsx`)의 설정을 기반으로 임직원을 추가하고, "인원" 시트에 자동으로 기록하는 테스트입니다.
+
+### 주요 기능
+
+1. **순차 번호 부여**: "인원" 시트의 마지막 index를 확인하여 다음 번호부터 추가
+2. **자동 기록**: 추가된 임직원의 이름과 ID를 "인원" 시트에 자동으로 기록
+3. **설정 기반**: "임직원_추가" 시트의 설정(부서, 직급, 직책 등)을 사용
+
+### Excel 파일 구조
+
+#### "임직원_추가" 시트 (설정 템플릿)
+
+| 컬럼 | 이름 | 설명 |
+|------|------|------|
+| A | index | 사용할 이미지 파일 번호 (1부터 시작) |
+| B | department | 부서명 |
+| C | job_grade | 직급 |
+| D | job_position | 직책 |
+| E | assignment_start_date | 발령 시작일 ("today" 또는 날짜) |
+| F | access_cases | 출입케이스 (쉼표로 구분) |
+| G | rf_card | RF 카드 (쉼표로 구분) |
+
+#### "인원" 시트 (인원 로그)
+
+| 컬럼 | 이름 | 설명 |
+|------|------|------|
+| A | index | 순차 번호 (자동 부여) |
+| B | department | 부서명 |
+| C | job_grade | 직급 |
+| D | job_position | 직책 |
+| E | assignment_start_date | 발령 시작일 |
+| F | access_cases | 출입케이스 |
+| G | rf_card | RF 카드 |
+| H | (빈 칸) | - |
+| I | name | 생성된 이름 |
+| J | id | 사번 (이미지 파일명) |
+
+### 실행 방법
+
+```bash
+# Excel 파일을 먼저 닫아야 합니다!
+uv run python -m pytest e2e/access/employee/test_employee_management.py::TestEmployeeManagement::test_add_employees_from_excel --browser chromium
+
+# Headed 모드 (브라우저 표시)
+uv run python -m pytest e2e/access/employee/test_employee_management.py::TestEmployeeManagement::test_add_employees_from_excel --headed --browser chromium -s
+```
+
+### 중요 사항
+
+1. **Excel 파일 닫기**: 테스트 실행 전에 `em_add.xlsx` 파일을 닫아야 합니다
+   - Excel에서 파일이 열려있으면 "인원" 시트에 데이터를 저장할 수 없습니다
+   - 잠금 파일 확인: `~$em_add.xlsx` 파일이 있으면 Excel이 열려있는 것입니다
+
+2. **순차 번호 부여**:
+   - 테스트 시작 전 "인원" 시트의 마지막 index를 확인
+   - 예: 마지막 index가 51이면, 새 임직원은 52, 53, 54... 순으로 추가
+
+3. **이미지 파일**:
+   - `employee/` 폴더에서 이미지 읽기
+   - 성공 후 `employee_add/` 폴더로 이동
+   - 이미지 파일명(확장자 제외)이 사번이 됨
+
+4. **테스트 출력**:
+   - 각 임직원 처리 진행 상황 표시
+   - 시간 정보 표시
+   - "인원" 시트 기록 확인 메시지
+
+### 실행 예시
+
+```
+[WARNING] Excel 파일이 다른 프로그램에서 열려있습니다: C:\...\em_add.xlsx
+[WARNING] 테스트는 실행되지만 '인원' 시트에 데이터를 저장하지 못할 수 있습니다.
+[WARNING] 데이터 저장을 위해 Excel 파일을 닫고 테스트를 실행하세요.
+
+[INFO] '인원' 시트의 마지막 index: 51, 다음 추가할 index: 52
+[INFO] Excel에서 읽은 임직원 수: 1명
+
+[START] Processing 1 employees from Excel...
+
+[INFO] Processing employee 1/1: Personnel Index=52, Image Index=1, ID=1098827, Name=1098827-1761723342
+[INFO] Using access cases from Excel: ['메인타워', '본사사옥']
+[INFO] Selected 2/2 access cases
+[OK] Employee added successfully: ID=1098827, Name=1098827-1761723342, Time=5.83s
+[INFO] Added to '인원' sheet: Index=52, Name=1098827-1761723342, ID=1098827
+[INFO] Image file moved: 1098827.jpg -> employee_add/
+
+[INFO] All employee info saved to Excel '인원' sheet: C:\...\em_add.xlsx
+
+[COMPLETE] Successfully added 1 employees from Excel
+[TIME] Total: 6.09s, Average per employee: 6.09s
+```
+
+### 트러블슈팅
+
+#### 문제: `[ERROR] Failed to save Excel file: Permission denied`
+
+**해결**: Excel에서 `em_add.xlsx` 파일을 닫고 다시 실행
+
+**확인 방법**:
+```bash
+ls -la e2e/access/employee/ | grep "~\$"
+```
+
+`~$em_add.xlsx` 파일이 보이면 Excel이 열려있는 것입니다.
+
+---
+
+#### 문제: 잘못된 이미지 파일 사용
+
+**해결**: "임직원_추가" 시트의 `index` 컬럼 확인
+- index 1 = 첫 번째 이미지 파일
+- index 2 = 두 번째 이미지 파일
+
+---
+
+#### 문제: "인원" 시트에 데이터가 없음
+
+**해결**:
+1. 테스트가 성공적으로 완료되었는지 확인 (에러 없이)
+2. Excel 파일이 잠겨있지 않았는지 확인
+3. Excel 파일을 닫고 테스트 재실행
+
+### 동작 방식
+
+1. **테스트 시작**: "인원" 시트에서 마지막 index 읽기 (예: 51)
+2. **임직원 1 처리**: 이미지 index 1 사용, 인원 index 52 부여, "인원" 시트에 기록
+3. **임직원 2 처리**: 이미지 index 2 사용, 인원 index 53 부여, "인원" 시트에 기록
+4. **Excel 저장**: 모든 변경사항을 em_add.xlsx에 저장
+
 ## 추가 정보
 
 - 전체 테스트 가이드: `tests-python/TESTING-GUIDE.md`

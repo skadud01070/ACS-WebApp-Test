@@ -1,3 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(uv run python -m pytest:*)",
+      "Bash(python:*)"
+    ]
+  },
   "outputStyle": "Explanatory"
 }
